@@ -42,6 +42,7 @@ class Synthesizer():
         self.save_dir = save_dir
         self.data_pool = ImagePool(root=self.save_dir)
         self.data_iter = None
+        # 只是一个字符串
         self.dataset = dataset
 
         self.generator = generator.cuda().train()
@@ -188,6 +189,7 @@ def kd_train(synthesizer, model, optimizer, score_val):
 
 def cal_azure(model, data):
     data = data.view(data.size(0), 784).cpu().numpy()
+    # 预测模型
     output = model.predict(data)
     output = torch.from_numpy(output).cuda().long()
     return output
@@ -219,9 +221,12 @@ if __name__ == '__main__':
                                              sampler=sp.SubsetRandomSampler(data_list), num_workers=4)
 
     tf_writer = SummaryWriter(log_dir=public)
+    # 替代模型
     sub_net, _ = get_model(args.dataset, 0)
+    # 获取 mnist 模型
     clf = joblib.load('pretrained/sklearn_mnist_model.pkl')
 
+    # 计算原始模型的准确率
     with torch.no_grad():
         correct_netD = 0.0
         total = 0.0
@@ -235,9 +240,13 @@ if __name__ == '__main__':
     ################################################
     # estimate the attack success rate of initial D:
     ################################################
+
+
     correct_ghost = 0.0
     total = 0.0
     sub_net.eval()
+
+    # 对替代模型进行攻击，但模型还没开始训练呢？？？
     adversary_ghost = LinfBasicIterativeAttack(
         sub_net, loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"), eps=0.3,
         nb_iter=100, eps_iter=0.01, clip_min=0.0, clip_max=1.0,
@@ -261,6 +270,7 @@ if __name__ == '__main__':
     img_size = 28
     img_size2 = (1, 28, 28)
 
+    # 生成虚假数据
     generator = Generator_2(nz=nz, ngf=64, img_size=img_size, nc=nc).cuda()
 
     num_class = 10
@@ -300,9 +310,12 @@ if __name__ == '__main__':
                 inputs, labels = inputs.cuda(), labels.cuda()
                 adv_inputs_ghost = adversary_ghost.perturb(inputs, labels)
                 with torch.no_grad():
+                    # 预测一下模型
                     predicted = cal_azure(clf, adv_inputs_ghost)
                 total += labels.size(0)
+                # 计算正确率
                 correct_ghost += (predicted == labels).sum()
+            # 计算攻击成功率
             asr = (100 - 100. * correct_ghost.float() / total)
             print('Attack success rate: %.2f %%' % asr)
             save_checkpoint({

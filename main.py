@@ -16,6 +16,9 @@ import torch
 import torch.nn.functional as F
 import torch.utils.data.sampler as sp
 import torch.backends.cudnn as cudnn
+from nets import resnet34, CNN, CNNCifar10, resnet18, resnet50, MLP 
+from advertorch.attacks import PGDAttack
+import torch.nn as nn
 
 from nets import Generator_2
 from utils import ScoreLoss, ImagePool, MultiTransform, reset_model, get_dataset, cal_prob, cal_label, setup_seed, \
@@ -78,15 +81,20 @@ class Synthesizer():
         return self.data_loader
 
     def gen_data(self, student):
+        # 评估模式
         student.eval()
         best_cost = 1e6
         best_inputs = None
+        # 生成数据
         z = torch.randn(size=(self.sample_batch_size, self.nz)).cuda()  #
+        # 开启梯度
         z.requires_grad = True
+        # 生成标签
         targets = torch.randint(low=0, high=self.num_classes, size=(self.sample_batch_size,))
         targets = targets.sort()[0]
         targets = targets.cuda()
         reset_model(self.generator)
+        # Adam优化器（？）
         optimizer = torch.optim.Adam(self.generator.parameters(), self.lr_g, betas=[0.5, 0.999])
 
         for it in range(self.iterations):
@@ -95,11 +103,15 @@ class Synthesizer():
             global_view, _ = self.aug(inputs)  # crop and normalize
 
             s_out = student(global_view)
-            loss = self.score_loss(s_out, targets)  # ce_loss
+            loss_ce = F.cross_entropy(s_out, targets)
+
+            prob = F.softmax(s_out, dim=-1)
+            loss_infor = 5 * torch.mul(prob, torch.log(prob)).mean()
+            loss = loss_infor + loss_ce
+
             if best_cost > loss.item() or best_inputs is None:
                 best_cost = loss.item()
                 best_inputs = inputs.data
-
             loss.backward()
             optimizer.step()
         # with tqdm(total=self.iterations) as t:
@@ -151,29 +163,77 @@ def args_parser():
     args = parser.parse_args()
     return args
 
-
+# 论文重点
 def kd_train(synthesizer, model, optimizer, score_val):
+
+    
     sub_net, blackBox_net = model
+
+    # 训练黑盒模型
     sub_net.train()
     blackBox_net.eval()
+
+    adversary = PGDAttack(
+                sub_net,
+                loss_fn=nn.CrossEntropyLoss(reduction="sum"),
+                eps=8.0 / 255,
+                nb_iter=20, eps_iter=2.0 / 255, clip_min=0.0, clip_max=1.0,
+                targeted=True)
 
     # with tqdm(synthesizer.get_data()) as epochs:
     data = synthesizer.get_data()
     for idx, (images) in enumerate(data):
         optimizer.zero_grad()
         images = images.cuda()
-        original_score = cal_prob(blackBox_net, images)  # prob
         substitute_outputs = sub_net(images.detach())
-        substitute_score = F.softmax(substitute_outputs, dim=1)
-        loss_mse = mse_loss(
-            substitute_score, original_score, reduction='mean')
+
+        if score_val != 0:
+            # 获得黑盒模型的输出
+            original_score = cal_prob(blackBox_net, images)  # prob
+            # 输出替代模型的输出的概率
+            substitute_score = F.softmax(substitute_outputs, dim=1)
+            # 计算替代模型的输出的概率和黑盒模型的输出的概率的均方误差 Ldis
+            loss_mse = mse_loss(
+                substitute_score, original_score, reduction='mean')
+        else:
+            loss_mse = 0
+
+        
+        # 计算黑盒模型的输出的label
         label = cal_label(blackBox_net, images)  # label
+        # 计算替代模型的输出的label的交叉熵
         loss_ce = F.cross_entropy(substitute_outputs, label)
+
+        pred_substitute = torch.max(substitute_outputs, 1)[1]
+        inconsistent_idx = (pred_substitute != label)
+        print(inconsistent_idx)
+
+        if inconsistent_idx.sum() > 0:
+            L_bd = mse_loss(substitute_outputs[inconsistent_idx], label[inconsistent_idx], reduction='mean')
+        else:
+            L_bd = 0.0
+
+        adv_inputs_ori = adversary.perturb(images[idx], label[idx])
+        adv_outputs_sub = sub_net(adv_inputs_ori)
+        adv_outputs_target = blackBox_net(adv_inputs_ori)
+        
+        pred_adv_sub = torch.max(adv_outputs_sub, 1)[1]
+        pred_adv_target = torch.max(adv_outputs_target, 1)[1]
+        consistent_idx = (pred_adv_sub == pred_adv_target)
+        if consistent_idx.sum() > 0:
+            L_adv = mse_loss(adv_outputs_sub[consistent_idx], pred_adv_target[consistent_idx])
+        else:
+            L_adv = 0.0
+
+        # 对应论文的Lbd
+        # 只对误分类样本计算交叉熵
         # ==============================
         # idx = torch.where(substitute_outputs.max(1)[1] != label)[0]
         # loss_adv = F.cross_entropy(substitute_outputs[idx], label[idx])
         # ==============================
-        loss = loss_ce + loss_mse * score_val
+
+        # loss_mse 看起来是针对可计算概率的样本，如果没有可计算概率的样本，score_val=0
+        loss = loss_ce + loss_mse * score_val + L_bd + L_adv
 
         loss.backward()
         optimizer.step()
@@ -188,20 +248,27 @@ if __name__ == '__main__':
 
     args = args_parser()
     setup_seed(args.seed)
+
+    # 获取数据集
     train_loader, test_loader = get_dataset(args.dataset)
 
-    public = dir + '/logs_{}_{}'.format(args.dataset, str(args.score))
+    public = dir + '/logs_{}_{}_{}'.format(args.dataset, args.model , str(args.score))
     if not os.path.exists(public):
         os.mkdir(public)
     log = open('{}/log_ours.txt'.format(public), 'w')
 
     list = [i for i in range(0, len(test_loader.dataset))]
     data_list = random.sample(list, 1024)
+
+    # 从测试集中随机选择样本
     val_loader = torch.utils.data.DataLoader(test_loader.dataset, batch_size=128,
                                              sampler=sp.SubsetRandomSampler(data_list), num_workers=4)
 
     tf_writer = SummaryWriter(log_dir=public)
-    sub_net, _ = get_model(args.dataset, 0)
+    # sub_net, _ = get_model(args.dataset, 0)
+
+    # 模型初始化
+    sub_net = resnet18(num_classes=10).cuda()
     blackBox_net, state_dict = get_model(args.dataset, 1)
     blackBox_net.load_state_dict(state_dict)
 
@@ -262,7 +329,7 @@ if __name__ == '__main__':
                               sample_batch_size=args.batch_size,
                               save_dir=args.save_dir,
                               dataset=args.dataset)
-    # &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+    # 随机梯度下降算法
     optimizer = optim.SGD(sub_net.parameters(), lr=args.lr, momentum=args.momentum)
     sub_net.train()
     best_acc = -1
@@ -278,15 +345,15 @@ if __name__ == '__main__':
             acc, test_loss = test(sub_net, val_loader)
             asr, val_acc = test_robust(val_loader, sub_net, blackBox_net, args.dataset)
 
-        #     save_checkpoint({
-        #     'state_dict': sub_net.state_dict(),
-        #     'epoch': epoch,
-        # }, acc > best_acc, best_acc_ckpt)
-        #
-        #     save_checkpoint({
-        #     'state_dict': sub_net.state_dict(),
-        #     'epoch': epoch,
-        # }, asr > best_asr, best_asr_ckpt)
+            save_checkpoint({
+            'state_dict': sub_net.state_dict(),
+            'epoch': epoch,
+        }, acc > best_acc, best_acc_ckpt)
+        
+            save_checkpoint({
+            'state_dict': sub_net.state_dict(),
+            'epoch': epoch,
+        }, asr > best_asr, best_asr_ckpt)
 
             best_asr = max(best_asr, asr)
             best_acc = max(best_acc, acc)

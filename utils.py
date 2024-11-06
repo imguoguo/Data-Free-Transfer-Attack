@@ -18,7 +18,7 @@ import os
 import random
 from torchvision import datasets, transforms
 from PIL import Image
-from nets import CNN, CNNCifar10, resnet18, resnet50
+from nets import CNN, CNNCifar10, resnet18, resnet50, resnet34
 
 
 def get_model(dataset, load):
@@ -26,27 +26,27 @@ def get_model(dataset, load):
         model = CNN().cuda()
         # model = Net_m().cuda()
     elif dataset == "cifar10" or dataset == "svhn":
-        # model = resnet18(num_classes=10).cuda()
-        model = CNNCifar10().cuda()
+        model = resnet34(num_classes=10).cuda()
+        # model = CNNCifar10().cuda()
     elif dataset == "cifar100":
         model = resnet50(num_classes=100).cuda()
     elif dataset == "tiny":
         model = resnet50(num_classes=200).cuda()
     # pretraind = 'public/attack/pretrained/'
-    pretraind = 'pretrained_ckpt/cifar10_cnn'
-    load_list = ['cnn_mnist.pth', 'cnn_fmnist.pth', 'cnncifar10.pkl', 'res18_svhn.pth',
+    pretraind = 'pretrained_ckpt/'
+    load_list = ['cnn_mnist.pth', 'cnn_fmnist.pth', 'cifar10_resnet34.pkl', 'svhn_resnet34.pkl',
                  'res50_cifar100.pth', 'res50_tiny_imagenet.pth']
     if load == 1:
         if "mnist" == dataset:
-            state_dict = torch.load(pretraind + load_list[0])['state_dict']
+            state_dict = torch.load(pretraind + load_list[0])
         elif "fmnist" == dataset:
-            state_dict = torch.load(pretraind + load_list[1])['state_dict']
+            state_dict = torch.load(pretraind + load_list[1])
         elif dataset == "cifar10":
-            state_dict = torch.load(pretraind + load_list[2])['state_dict']
+            state_dict = torch.load(pretraind + load_list[2])
         elif dataset == "svhn":
-            state_dict = torch.load(pretraind + load_list[3])['state_dict']
+            state_dict = torch.load(pretraind + load_list[3])
         elif dataset == "cifar100":
-            state_dict = torch.load(pretraind + load_list[4])['state_dict']
+            state_dict = torch.load(pretraind + load_list[4])
         elif dataset == "tiny":
             state_dict = torch.load(pretraind + load_list[5])
     else:
@@ -140,52 +140,52 @@ def print_log(strs, log):
 
 
 def get_dataset(dataset):
-    data_dir = '/mnt/lustre/share_data/zhangjie/'
+    data_dir = './data/'
     if dataset == "mnist":
-        train_dataset = datasets.MNIST(data_dir, train=True,
+        train_dataset = datasets.MNIST(data_dir, train=True, download=True,
                                        transform=transforms.Compose(
                                            [transforms.ToTensor()]))
-        test_dataset = datasets.MNIST(data_dir, train=False,
+        test_dataset = datasets.MNIST(data_dir, train=False, download=True,
                                       transform=transforms.Compose([
                                           transforms.ToTensor(),
                                       ]))
     elif dataset == "fmnist":
-        train_dataset = datasets.FashionMNIST(data_dir, train=True,
+        train_dataset = datasets.FashionMNIST(data_dir, train=True, download=True,
                                               transform=transforms.Compose(
                                                   [transforms.ToTensor()]))
-        test_dataset = datasets.FashionMNIST(data_dir, train=False,
+        test_dataset = datasets.FashionMNIST(data_dir, train=False, download=True,
                                              transform=transforms.Compose([
                                                  transforms.ToTensor(),
                                              ]))
     elif dataset == "svhn":
-        train_dataset = datasets.SVHN(data_dir, split="train",
+        train_dataset = datasets.SVHN(data_dir, split="train", download=True,
                                       transform=transforms.Compose(
                                           [transforms.ToTensor()]))
-        test_dataset = datasets.SVHN(data_dir, split="test",
+        test_dataset = datasets.SVHN(data_dir, split="test", download=True,
                                      transform=transforms.Compose([
                                          transforms.ToTensor(),
                                      ]))
     elif dataset == "cifar10":
-        train_dataset = datasets.CIFAR10(data_dir, train=True,
+        train_dataset = datasets.CIFAR10(data_dir, train=True, download=True,
                                          transform=transforms.Compose(
                                              [
                                                  transforms.RandomCrop(32, padding=4),
                                                  transforms.RandomHorizontalFlip(),
                                                  transforms.ToTensor(),
                                              ]))
-        test_dataset = datasets.CIFAR10(data_dir, train=False,
+        test_dataset = datasets.CIFAR10(data_dir, train=False, download=True,
                                         transform=transforms.Compose([
                                             transforms.ToTensor(),
                                         ]))
     elif dataset == "cifar100":
-        train_dataset = datasets.CIFAR100(data_dir, train=True,
+        train_dataset = datasets.CIFAR100(data_dir, train=True, download=True,
                                           transform=transforms.Compose(
                                               [
                                                   transforms.RandomCrop(32, padding=4),
                                                   transforms.RandomHorizontalFlip(),
                                                   transforms.ToTensor(),
                                               ]))
-        test_dataset = datasets.CIFAR100(data_dir, train=False,
+        test_dataset = datasets.CIFAR100(data_dir, train=False, download=True,
                                          transform=transforms.Compose([
                                              transforms.ToTensor(),
                                          ]))
@@ -203,7 +203,7 @@ def get_dataset(dataset):
                 transforms.ToTensor(),
             ])
         }
-        data_dir = "data/tiny-imagenet-200/"
+        data_dir = "./data/tiny-imagenet-200/"
         image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x), data_transforms[x])
                           for x in ['train', 'val', 'test']}
         train_dataset = image_datasets['train']
@@ -214,9 +214,9 @@ def get_dataset(dataset):
     else:
         raise NotImplementedError
 
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=256,
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=16,
                                                shuffle=True, num_workers=4)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=256,
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=16,
                                               shuffle=False, num_workers=4)
 
     return train_loader, test_loader

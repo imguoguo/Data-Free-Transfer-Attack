@@ -14,6 +14,7 @@ from advertorch.attacks import LinfBasicIterativeAttack, CarliniWagnerL2Attack
 
 
 from utils import get_model, test, setup_seed, get_dataset
+from nets import resnet18
 
 
 def test_adver(net, tar_net, attack, target, testloader, dataset):
@@ -98,7 +99,9 @@ def test_adver(net, tar_net, attack, target, testloader, dataset):
         else:
             # test the images which are classified correctly
             idx = torch.where(predicted == labels)[0]
+            # Loss adv
             adv_inputs_ori = adversary.perturb(inputs[idx], labels[idx])
+            
             L2_distance = (torch.norm(adv_inputs_ori - inputs[idx])).item()
             total_L2_distance += L2_distance
             with torch.no_grad():
@@ -128,7 +131,8 @@ if __name__ == '__main__':
     val_loader = torch.utils.data.DataLoader(test_loader.dataset, batch_size=64,
                                              sampler=sp.SubsetRandomSampler(data_list), num_workers=4)
 
-    sub_net, _ = get_model(opt.dataset, 0)
+    sub_net = resnet18(num_classes=10).cuda()
+    sub_net = torch.nn.DataParallel(sub_net)
     state_dict_1 = torch.load(opt.dir)['state_dict']
     sub_net.load_state_dict(state_dict_1)
 

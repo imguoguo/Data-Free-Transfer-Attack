@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from tensorboardX import SummaryWriter
-from nets import resnet34, CNN, CNNCifar10, resnet18, resnet50, MLP, AlexNet, vgg8_bn
+from nets import resnet34, CNN, CNNCifar10, resnet18, resnet50, MLP 
 from utils import test, get_dataset
 import warnings
 
@@ -31,29 +31,33 @@ def adjust_learning_rate(lr, optimizer, epoch):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
-# def get_model(dataset, net):
-#     if "mnist" in dataset:
-#         if net == "mlp":
-#             model = MLP().cuda()
-#         elif net == "lenet":
-#             model = CNN().cuda()
-#         elif net == "alexnet":
-#             model = AlexNet().cuda()
-#     elif dataset == "svhn":
-#         if net == "alexnet":
-#             model = CNNCifar10().cuda()
-#         elif net == "vgg":
-#             model = CNNCifar10().cuda()
-#         elif net == "resnet18":
-#             model = resnet18(num_classes=10).cuda()
-#     elif dataset == "cifar10":
-#         # model = resnet18(num_classes=10).cuda()
-#         model = CNNCifar10().cuda()
-#     elif dataset == "cifar100":
-#         model = resnet50(num_classes=100).cuda()
-#     elif dataset == "imagenet":
-#         model = resnet18(num_classes=12).cuda()
-#     return model
+def get_model(dataset, net):
+    if "mnist" in dataset:
+        if net == "mlp":
+            model = MLP().cuda()
+        elif net == "cnn":
+            model = CNN().cuda()
+        elif net == "alexnet":
+            model = AlexNet().cuda()
+    elif dataset == "svhn":
+        if net == "alexnet":
+            model = CNNCifar10().cuda()
+        elif net == "vgg":
+            model = CNNCifar10().cuda()
+        elif net == "resnet18":
+            model = resnet18(num_classes=10).cuda()
+        elif net == "resnet34":
+            model = resnet34(num_classes=10).cuda()
+    elif dataset == "cifar10":
+        model = resnet34(num_classes=10).cuda()
+        # model = CNNCifar10().cuda()
+    elif dataset == "cifar100":
+        model = resnet50(num_classes=100).cuda()
+    elif dataset == "imagenet":
+        model = resnet18(num_classes=12).cuda()
+    elif dataset == "tiny":
+        model = resnet50(num_classes=200).cuda()
+    return model
 
 
 def main():
@@ -75,7 +79,8 @@ def main():
 
     train_loader, test_loader = get_dataset(args.dataset)
     # model = get_teacher_model(args.dataset, args.net)
-    model = CNNCifar10().cuda()
+    model = get_model(args.dataset, args.net)
+    # model = CNNCifar10().cuda()
     # model = vgg8_bn(num_classes=10).cuda()
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     bst_acc = -1
