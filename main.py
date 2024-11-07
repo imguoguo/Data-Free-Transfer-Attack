@@ -3,6 +3,7 @@
 # Python version: 3.6
 import argparse
 import os
+import copy
 from tensorboardX import SummaryWriter
 import numpy as np
 import torch.optim as optim
@@ -163,26 +164,26 @@ def args_parser():
     args = parser.parse_args()
     return args
 
-# 论文重点
-def kd_train(synthesizer, model, optimizer, score_val):
 
-    
+# 论文重点
+def kd_train(synthesizer, model, optimizer, score_val, writer):
+
     sub_net, blackBox_net = model
 
-    # 训练黑盒模型
-    sub_net.train()
+    # 训练替代模型
     blackBox_net.eval()
-
-    adversary = PGDAttack(
-                sub_net,
-                loss_fn=nn.CrossEntropyLoss(reduction="sum"),
-                eps=8.0 / 255,
-                nb_iter=20, eps_iter=2.0 / 255, clip_min=0.0, clip_max=1.0,
-                targeted=True)
-
+    sub_net.train()
+    
     # with tqdm(synthesizer.get_data()) as epochs:
     data = synthesizer.get_data()
     for idx, (images) in enumerate(data):
+        sub_net_copy = copy.deepcopy(sub_net)
+        adversary = PGDAttack(
+                sub_net_copy,
+                loss_fn=nn.CrossEntropyLoss(reduction="sum"),
+                eps=8.0 / 255,
+                nb_iter=20, eps_iter=2.0 / 255, clip_min=0.0, clip_max=1.0,
+            targeted=True)
         optimizer.zero_grad()
         images = images.cuda()
         substitute_outputs = sub_net(images.detach())
@@ -199,45 +200,45 @@ def kd_train(synthesizer, model, optimizer, score_val):
             
             # add
             idx = torch.where(substitute_outputs.max(1)[1] != original_score.max(1)[1])[0]
-            loss_bd = mse_loss(substitute_outputs[idx], original_score[idx])
+            loss_bd = mse_loss(substitute_outputs[idx], original_score[idx], reduction='mean')
 
             adv_inputs_ori = adversary.perturb(images[idx], label[idx])
             adv_outputs_target = sub_net(adv_inputs_ori.detach())
             adv_score = cal_prob(blackBox_net, adv_inputs_ori)
 
-            idx = torch.where(adv_outputs_target.max(1)[1] != adv_score.max(1)[1])[0]
-            loss_adv = mse_loss(adv_outputs_target[idx], adv_score[idx])
+            idx = torch.where(adv_outputs_target.max(1)[1] == adv_score.max(1)[1])[0]
+            loss_adv = mse_loss(adv_outputs_target[idx], adv_score[idx], reduction='mean')
             
 
         else:
             
             # 计算替代模型的输出的label的交叉熵
             loss_ce = F.cross_entropy(substitute_outputs, label)
+            
+            idx_bd = torch.where(substitute_outputs.max(1)[1] != label)[0]
 
-            idx = torch.where(substitute_outputs.max(1)[1] != label)[0]
-            loss_bd = F.cross_entropy(substitute_outputs[idx], label[idx])
-
-            adv_inputs_ori = adversary.perturb(images[idx], label[idx])
+            loss_bd = F.cross_entropy(substitute_outputs[idx_bd], label[idx_bd])
+                # sub_net.eval()
+            
+            adv_inputs_ori = adversary.perturb(images, label)
+            # sub_net.train()
             adv_outputs_target = sub_net(adv_inputs_ori.detach())
             adv_label = cal_label(blackBox_net, adv_inputs_ori)
             
             idx = torch.where(adv_outputs_target.max(1)[1] == adv_label)[0]
             loss_adv = F.cross_entropy(adv_outputs_target[idx], adv_label[idx])
 
-        
-        
-
-        # 对应论文的Lbd
-        # 只对误分类样本计算交叉熵
-        # ==============================
-        
-        # ==============================
-
         # loss_mse 看起来是针对可计算概率的样本，如果没有可计算概率的样本，score_val=0
+        # loss = 0.2 * loss_ce + 0.3 * loss_bd + 0.5 * loss_adv
         loss = loss_ce + loss_bd + loss_adv
-
         loss.backward()
         optimizer.step()
+
+        for name, param in sub_net.named_parameters():
+            if param.grad is not None:
+                writer.add_histogram(f"{name}.grad", param.grad, epoch)
+    writer.add_scalar("Loss/train", loss, epoch)
+        
     # return loss.item()
 
 
@@ -338,10 +339,11 @@ if __name__ == '__main__':
 
     best_acc_ckpt = '{}/{}_ours_acc.pth'.format(public, args.dataset)
     best_asr_ckpt = '{}/{}_ours_asr.pth'.format(public, args.dataset)
+    writer = SummaryWriter(log_dir="logs/svhn_{}".format(args.score))
     for epoch in tqdm(range(args.epochs)):
         # 1. Data synthesis
-        synthesizer.gen_data(sub_net)  # g_steps
-        kd_train(synthesizer, [sub_net, blackBox_net], optimizer, args.score)
+        synthesizer.gen_data(sub_net)  # 这里传进去了替代模型！
+        kd_train(synthesizer, [sub_net, blackBox_net], optimizer, args.score, writer)
         if epoch % 1 == 0:  # 250*40, 250*10=2.5k
             acc, test_loss = test(sub_net, val_loader)
             asr, val_acc = test_robust(val_loader, sub_net, blackBox_net, args.dataset)
@@ -362,7 +364,7 @@ if __name__ == '__main__':
             print_log("Accuracy of the substitute model:{:.3} %, best accuracy:{:.3} % \n".format(acc, best_acc), log)
             print_log("ASR:{:.3} %, best asr:{:.3} %, val acc:{:.3} % \n".format(asr, best_asr, val_acc), log)
             log.flush()
-
+    writer.close()
 """
 40*256=1w
 CUDA_VISIBLE_DEVICES=2 python3 main.py --epochs=400  --save_dir=run/svhn_1 \

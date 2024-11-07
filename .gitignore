@@ -134,3 +134,4 @@ run/*
 data/*
 saved/*
 data
+logs/*
