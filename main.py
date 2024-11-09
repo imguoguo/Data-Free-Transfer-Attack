@@ -20,6 +20,7 @@ import torch.backends.cudnn as cudnn
 from nets import resnet34, CNN, CNNCifar10, resnet18, resnet50, MLP 
 from advertorch.attacks import PGDAttack
 import torch.nn as nn
+from datetime import datetime
 
 from nets import Generator_2
 from utils import ScoreLoss, ImagePool, MultiTransform, reset_model, get_dataset, cal_prob, cal_label, setup_seed, \
@@ -195,29 +196,37 @@ def kd_train(synthesizer, model, optimizer, score_val, writer):
             # 输出替代模型的输出的概率
             substitute_score = F.softmax(substitute_outputs, dim=1)
             # 计算替代模型的输出的概率和黑盒模型的输出的概率的均方误差 Ldis
-            loss_ce = mse_loss(
+            # loss_ce
+            loss = mse_loss(
                 substitute_score, original_score, reduction='mean')
             
             # add
             idx = torch.where(substitute_outputs.max(1)[1] != original_score.max(1)[1])[0]
-            loss_bd = mse_loss(substitute_outputs[idx], original_score[idx], reduction='mean')
+            if idx.numel() != 0:
+                # loss_bd
+                loss += mse_loss(substitute_score[idx], original_score[idx], reduction='mean')
 
-            adv_inputs_ori = adversary.perturb(images[idx], label[idx])
+            adv_inputs_ori = adversary.perturb(images, label)
             adv_outputs_target = sub_net(adv_inputs_ori.detach())
             adv_score = cal_prob(blackBox_net, adv_inputs_ori)
-
+            adv_substitute_score = F.softmax(adv_outputs_target, dim=1)
+            
             idx = torch.where(adv_outputs_target.max(1)[1] == adv_score.max(1)[1])[0]
-            loss_adv = mse_loss(adv_outputs_target[idx], adv_score[idx], reduction='mean')
+
+            if idx.numel() != 0:
+                # loss_adv
+                loss += mse_loss(adv_substitute_score[idx], adv_score[idx], reduction='mean')
             
 
         else:
             
             # 计算替代模型的输出的label的交叉熵
-            loss_ce = F.cross_entropy(substitute_outputs, label)
+            loss = F.cross_entropy(substitute_outputs, label)
             
             idx_bd = torch.where(substitute_outputs.max(1)[1] != label)[0]
 
-            loss_bd = F.cross_entropy(substitute_outputs[idx_bd], label[idx_bd])
+            if idx_bd.numel() != 0:
+                loss += F.cross_entropy(substitute_outputs[idx_bd], label[idx_bd])
                 # sub_net.eval()
             
             adv_inputs_ori = adversary.perturb(images, label)
@@ -226,17 +235,19 @@ def kd_train(synthesizer, model, optimizer, score_val, writer):
             adv_label = cal_label(blackBox_net, adv_inputs_ori)
             
             idx = torch.where(adv_outputs_target.max(1)[1] == adv_label)[0]
-            loss_adv = F.cross_entropy(adv_outputs_target[idx], adv_label[idx])
+            if idx.numel() != 0:
+                loss += F.cross_entropy(adv_outputs_target[idx], adv_label[idx])
 
         # loss_mse 看起来是针对可计算概率的样本，如果没有可计算概率的样本，score_val=0
         # loss = 0.2 * loss_ce + 0.3 * loss_bd + 0.5 * loss_adv
-        loss = loss_ce + loss_bd + loss_adv
+        
         loss.backward()
         optimizer.step()
 
         for name, param in sub_net.named_parameters():
             if param.grad is not None:
                 writer.add_histogram(f"{name}.grad", param.grad, epoch)
+                writer.add_histogram(f"{name}.lr", optimizer.param_groups[0]['lr'], epoch)
     writer.add_scalar("Loss/train", loss, epoch)
         
     # return loss.item()
@@ -254,7 +265,8 @@ if __name__ == '__main__':
     # 获取数据集
     train_loader, test_loader = get_dataset(args.dataset)
 
-    public = dir + '/logs_{}_{}_{}'.format(args.dataset, args.model , str(args.score))
+    time = datetime.now().strftime("%Y-%m-%d-%H_%M_%S")
+    public = dir + '/logs_{}_{}_{}_{}'.format(args.dataset, args.model, str(args.score), time)
     if not os.path.exists(public):
         os.mkdir(public)
     log = open('{}/log_ours.txt'.format(public), 'w')
