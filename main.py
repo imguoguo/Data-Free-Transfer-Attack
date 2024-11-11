@@ -299,10 +299,13 @@ if __name__ == '__main__':
     ################################################
     # data generator
     ################################################
+    # 噪声向量维度
     nz = args.nz
+    # 图像通道数
     nc = 3 if "cifar" in args.dataset or args.dataset == "svhn" or args.dataset == "tiny" else 1
     # img_size = 32 if "cifar" in args.dataset or args.dataset == "svhn" else 28
 
+    # 图像尺寸
     if "cifar" in args.dataset or args.dataset == "svhn":
         img_size = 32
     elif "mnist" in args.dataset:

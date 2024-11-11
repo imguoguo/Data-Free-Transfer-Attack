@@ -69,7 +69,7 @@ def main():
                         help='dataset')
     parser.add_argument('--epochs', type=int, default=100,
                         help='number of epochs to train (default: 100)')
-    parser.add_argument('--lr', type=float, default=0.1,
+    parser.add_argument('--lr', type=float, default=0.01,
                         help='learning rate (default: 0.01)')
     parser.add_argument('--momentum', type=float, default=0.9,
                         help='SGD momentum (default: 0.9)')
